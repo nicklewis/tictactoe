@@ -1,5 +1,9 @@
 (ns tictactoe.core
-  (:require [clojure.string :refer (split trim)])
+  (:require [clojure.string :refer (split trim)]
+            [metrics.counters :refer (counter inc! value)]
+            [metrics.timers :refer  (timer time!)]
+            [clojure.tools.nrepl.server :as nrepl]
+            [clojure.tools.nrepl.transport :as nrepl-transport])
   (:gen-class))
 
 (defn new-board
@@ -58,27 +62,41 @@
 
 (defn game-over
   [player]
-  (println "Player" player "won!")
-  (System/exit 0))
+  (println "Player" player "won!"))
+
+(def move-timers
+  {:X (timer ["tictactoe.core" "move-timer" "X"])
+   :O (timer ["tictactoe.core" "move-timer" "O"])})
+
+(def win-counters
+  {:X (counter ["tictactoe.core" "wins" "X"])
+   :O (counter ["tictactoe.core" "wins" "O"])})
 
 (defn play-game
   []
   (println "Welcome to tic-tac-toe")
   (loop [board (new-board)
          player "X"]
-    (when (stalemate? board)
-      (println "YOU ALL LOSE")
-      (System/exit 0))
-    (print-board board)
-    (println "Enter move for player" player)
-    (let [move (parse-move (read-line))]
-      (if (valid? board move)
-        (let [new-board (make-move board move player)]
-          (if (won? new-board move)
-            (game-over player)
-            (recur new-board (change-player player))))
-        (recur board player)))))
+    (if (stalemate? board)
+      (println "YOU ALL LOSE"))
+    (do
+      (print-board board)
+      (println "Enter move for player" player)
+      (let [move (parse-move (time! (move-timers (keyword player)) (read-line)))]
+        (if (valid? board move)
+          (let [new-board (make-move board move player)]
+            (if (won? new-board move)
+              (do
+                (inc! (win-counters (keyword player)))
+                (game-over player))
+              (recur new-board (change-player player))))
+          (recur board player))))))
 
 (defn -main
   []
-  (play-game))
+  (nrepl/start-server :port 9002 :bind "localhost")
+  (while true
+    (try
+      (play-game)
+      (catch Throwable e
+        (println (format "Uh-oh! Got an exception. Restarting the game."))))))
